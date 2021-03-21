@@ -188,6 +188,14 @@ options:
         required: false
         choices: ["DAEMON", "REPLICA"]
         type: str
+    enable_execute_command:
+        description:
+          - Whether or not to enable the execute command functionality for the containers in this task.
+          - If `true`, this enables execute command functionality on all containers in the task.
+          - This option requires botocore >= 1.20.28
+        required: false
+        type: bool
+        default: false
 extends_documentation_fragment:
 - amazon.aws.aws
 - amazon.aws.ec2
@@ -561,7 +569,8 @@ class EcsServiceManager:
     def create_service(self, service_name, cluster_name, task_definition, load_balancers,
                        desired_count, client_token, role, deployment_configuration,
                        placement_constraints, placement_strategy, health_check_grace_period_seconds,
-                       network_configuration, service_registries, launch_type, scheduling_strategy):
+                       network_configuration, service_registries, launch_type, scheduling_strategy,
+                       enable_execute_command):
 
         params = dict(
             cluster=cluster_name,
@@ -588,12 +597,16 @@ class EcsServiceManager:
 
         if scheduling_strategy:
             params['schedulingStrategy'] = scheduling_strategy
+        if enable_execute_command:
+            params['enableExecuteCommand'] = enable_execute_command
+
         response = self.ecs.create_service(**params)
         return self.jsonize(response['service'])
 
     def update_service(self, service_name, cluster_name, task_definition,
                        desired_count, deployment_configuration, network_configuration,
-                       health_check_grace_period_seconds, force_new_deployment):
+                       health_check_grace_period_seconds, force_new_deployment,
+                       enable_execute_command):
         params = dict(
             cluster=cluster_name,
             service=service_name,
@@ -608,6 +621,8 @@ class EcsServiceManager:
         # desired count is not required if scheduling strategy is daemon
         if desired_count is not None:
             params['desiredCount'] = desired_count
+        if enable_execute_command:
+            params['enableExecuteCommand'] = enable_execute_command
 
         response = self.ecs.update_service(**params)
         return self.jsonize(response['service'])
@@ -686,7 +701,8 @@ def main():
         )),
         launch_type=dict(required=False, choices=['EC2', 'FARGATE']),
         service_registries=dict(required=False, type='list', default=[], elements='dict'),
-        scheduling_strategy=dict(required=False, choices=['DAEMON', 'REPLICA'])
+        scheduling_strategy=dict(required=False, choices=['DAEMON', 'REPLICA']),
+        enable_execute_command=dict(required=False, default=False, type='bool'),
     )
 
     module = AnsibleAWSModule(argument_spec=argument_spec,
@@ -726,6 +742,9 @@ def main():
     if module.params['force_new_deployment']:
         if not module.botocore_at_least('1.8.4'):
             module.fail_json(msg='botocore needs to be version 1.8.4 or higher to use force_new_deployment')
+    if module.params['enable_execute_command']:
+        if not module.botocore_at_least('1.20.28'):
+            module.fail_json(msg='botocore needs to be version 1.20.28 or higher to use enable_execute_command')
     if module.params['health_check_grace_period_seconds']:
         if not module.botocore_at_least('1.8.20'):
             module.fail_json(msg='botocore needs to be version 1.8.20 or higher to use health_check_grace_period_seconds')
@@ -786,7 +805,8 @@ def main():
                                                           deploymentConfiguration,
                                                           network_configuration,
                                                           module.params['health_check_grace_period_seconds'],
-                                                          module.params['force_new_deployment'])
+                                                          module.params['force_new_deployment'],
+                                                          module.params['enable_execute_command'])
 
                 else:
                     try:
@@ -804,8 +824,8 @@ def main():
                                                               network_configuration,
                                                               serviceRegistries,
                                                               module.params['launch_type'],
-                                                              module.params['scheduling_strategy']
-                                                              )
+                                                              module.params['scheduling_strategy'],
+                                                              module.params['enable_execute_command'])
                     except botocore.exceptions.ClientError as e:
                         module.fail_json_aws(e, msg="Couldn't create service")
 
